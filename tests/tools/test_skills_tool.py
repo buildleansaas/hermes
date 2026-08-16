@@ -457,6 +457,54 @@ class TestSkillView:
         assert result["success"] is True
         assert "Endpoint info" in result["content"]
 
+    def test_view_heading_slice_returns_provenance_and_budget(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "release-ops",
+                body=(
+                    "Intro.\n\n"
+                    "## Vercel verification\nCheck the deployment alias.\n"
+                    "### Smoke test\nOpen the live URL.\n\n"
+                    "## Rollback\nRestore the previous alias.\n"
+                ),
+            )
+            raw = skill_view("release-ops", section="Vercel verification")
+
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert result["section"] == "Vercel verification"
+        assert "Check the deployment alias" in result["content"]
+        assert "Smoke test" in result["content"]
+        assert "Rollback" not in result["content"]
+        assert result["source_range"]["start_line"] < result["source_range"]["end_line"]
+        assert result["loaded_content_bytes"] < result["full_content_bytes"]
+        assert len(result["content_sha256"]) == 64
+
+    def test_view_line_range_and_invalid_or_ambiguous_sections(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "procedures",
+                body="one\n## Deploy staging\nstaging\n## Deploy production\nproduction\n",
+            )
+            line_raw = skill_view("procedures", start_line=1, end_line=3)
+            ambiguous_raw = skill_view("procedures", section="Deploy")
+            invalid_raw = skill_view(
+                "procedures", section="Deploy staging", start_line=1
+            )
+
+        line_result = json.loads(line_raw)
+        ambiguous = json.loads(ambiguous_raw)
+        invalid = json.loads(invalid_raw)
+        assert line_result["success"] is True
+        assert line_result["source_range"] == {"start_line": 1, "end_line": 3}
+        assert ambiguous["success"] is False
+        assert "ambiguous" in ambiguous["error"].lower()
+        assert len(ambiguous["available_sections"]) >= 2
+        assert invalid["success"] is False
+        assert "either section" in invalid["error"].lower()
+
     def test_view_nonexistent_file(self, tmp_path):
         with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
             _make_skill(tmp_path, "my-skill")
