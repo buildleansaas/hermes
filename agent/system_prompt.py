@@ -175,9 +175,21 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
             )
             if toolset
         }
+        compact_categories = frozenset()
+        try:
+            from hermes_cli.config import load_config
+
+            skills_config = (load_config() or {}).get("skills") or {}
+            if isinstance(skills_config, dict) and str(
+                skills_config.get("prompt_index_mode", "full")
+            ).strip().lower() in {"names_only", "compact"}:
+                compact_categories = frozenset({"*"})
+        except Exception:
+            pass
         skills_prompt = _r.build_skills_system_prompt(
             available_tools=agent.valid_tool_names,
             available_toolsets=avail_toolsets,
+            compact_categories=compact_categories,
         )
     else:
         skills_prompt = ""

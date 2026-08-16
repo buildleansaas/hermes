@@ -1,0 +1,126 @@
+{
+  "prompt_budget": {
+    "full": {
+      "characters": 21820,
+      "bytes": 21848,
+      "estimated_tokens": 5462
+    },
+    "names_only": {
+      "characters": 8414,
+      "bytes": 8420,
+      "estimated_tokens": 2105
+    },
+    "byte_reduction_percent": 61.46
+  },
+  "catalog": {
+    "path": "/root/.hermes/cache/skill_catalog.sqlite3",
+    "fingerprint": "42098e4262dd7aab0f969a09f0c4ea65c9f0486889c977b8fc6f92524cb6c6b6",
+    "indexed_skills": 197,
+    "rebuilt": true
+  },
+  "replay": {
+    "tasks": [
+      {
+        "id": "hermes-gateway-configuration",
+        "query": "configure Hermes Agent provider gateway",
+        "expected_skill": "hermes-agent",
+        "top_matches": [
+          "hermes-agent",
+          "agent-runtime-operations",
+          "subscription-model-routing-operations",
+          "runtime-upgrade-assurance",
+          "dspy"
+        ],
+        "top_k_hit": true,
+        "section_load": {
+          "success": true,
+          "section": "Gateway (Messaging Platforms)",
+          "source_range": {
+            "start_line": 140,
+            "end_line": 156
+          },
+          "full_skill_bytes": 62258,
+          "selected_section_bytes": 1072,
+          "byte_reduction_percent": 98.28
+        }
+      },
+      {
+        "id": "github-pr-ci",
+        "query": "create GitHub pull request inspect CI checks",
+        "expected_skill": "github-operations",
+        "top_matches": [
+          "github-operations",
+          "programmatic-seo",
+          "local-government-civic-research",
+          "hermes-workflow-discovery-review",
+          "ai-seo"
+        ],
+        "top_k_hit": true,
+        "section_load": {
+          "success": true,
+          "section": "Pull request lifecycle",
+          "source_range": {
+            "start_line": 99,
+            "end_line": 128
+          },
+          "full_skill_bytes": 28664,
+          "selected_section_bytes": 8328,
+          "byte_reduction_percent": 70.95
+        }
+      },
+      {
+        "id": "vercel-release-verification",
+        "query": "deploy Next.js Vercel production alias verification",
+        "expected_skill": "web-growth-deployment-ops",
+        "top_matches": [
+          "web-growth-deployment-ops",
+          "frontend-page-polish-qa",
+          "waitlist",
+          "ai-radar-content-ops",
+          "schema"
+        ],
+        "top_k_hit": true,
+        "section_load": {
+          "success": true,
+          "section": "A. Vercel / public web deployment lane",
+          "source_range": {
+            "start_line": 82,
+            "end_line": 110
+          },
+          "full_skill_bytes": 100135,
+          "selected_section_bytes": 8311,
+          "byte_reduction_percent": 91.7
+        }
+      },
+      {
+        "id": "obsidian-note-operations",
+        "query": "read update notes Obsidian vault",
+        "expected_skill": "obsidian",
+        "top_matches": [
+          "obsidian",
+          "obsidian-memory-bank",
+          "repository-commit-hygiene",
+          "credential-operations",
+          "github-issues-obsidian-ops"
+        ],
+        "top_k_hit": true,
+        "section_load": {
+          "success": true,
+          "section": "Read a note",
+          "source_range": {
+            "start_line": 21,
+            "end_line": 24
+          },
+          "full_skill_bytes": 15111,
+          "selected_section_bytes": 150,
+          "byte_reduction_percent": 99.01
+        }
+      }
+    ],
+    "task_count": 4,
+    "top_k": 5,
+    "top_k_hits": 4,
+    "top_k_hit_rate": 1.0,
+    "average_section_byte_reduction_percent": 89.98
+  }
+}

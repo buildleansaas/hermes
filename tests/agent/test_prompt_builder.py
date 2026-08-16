@@ -266,6 +266,36 @@ class TestBuildSkillsSystemPrompt:
         assert "Debug Python scripts" in result
         assert "available_skills" in result
 
+    def test_names_only_mode_is_lossless_and_has_independent_cache_key(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        skills_dir = tmp_path / "skills" / "coding"
+        alpha_description = "Alpha description " + "detail " * 40
+        beta_description = "Beta description " + "detail " * 40
+        for name, description in (
+            ("alpha", alpha_description),
+            ("beta", beta_description),
+        ):
+            skill_dir = skills_dir / name
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                f"---\nname: {name}\ndescription: {description}\n---\n"
+            )
+
+        full = build_skills_system_prompt()
+        names_only = build_skills_system_prompt(compact_categories=frozenset({"*"}))
+        full_again = build_skills_system_prompt()
+
+        assert "alpha" in names_only
+        assert "beta" in names_only
+        assert alpha_description.strip() not in names_only
+        assert beta_description.strip() not in names_only
+        assert "[names only]" in names_only
+        assert "skills_search" in names_only
+        assert len(names_only.encode("utf-8")) < len(full.encode("utf-8"))
+        assert full_again == full
+
     def test_deduplicates_skills(self, monkeypatch, tmp_path):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         cat_dir = tmp_path / "skills" / "tools"

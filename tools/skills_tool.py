@@ -66,6 +66,7 @@ Usage:
     content = skill_view("axolotl", "references/dataset-formats.md")
 """
 
+import hashlib
 import json
 import logging
 
@@ -740,6 +741,125 @@ def skills_list(category: str = None, task_id: str = None) -> str:
         return tool_error(str(e), success=False)
 
 
+def skills_search(
+    query: str,
+    category: str = None,
+    limit: int = 10,
+    task_id: str = None,
+) -> str:
+    """Search full skill metadata and headings without loading skill bodies."""
+    try:
+        from agent.skill_catalog import search_skill_catalog
+
+        requested_limit = max(1, min(int(limit), 50))
+        payload = search_skill_catalog(
+            query,
+            category=category,
+            limit=min(50, requested_limit * 4),
+        )
+        visible = []
+        for result in payload["results"]:
+            if not skill_matches_platform({"platforms": result.get("platforms") or []}):
+                continue
+            if _is_skill_disabled(result["name"]):
+                continue
+            result.pop("platforms", None)
+            visible.append(result)
+            if len(visible) >= requested_limit:
+                break
+        return json.dumps(
+            {
+                "success": True,
+                "query": query,
+                "results": visible,
+                "count": len(visible),
+                "catalog": payload["catalog"],
+                "content_loaded_bytes": 0,
+                "hint": "Load only the needed procedure with skill_view(name, section=...) when matched_headings identifies it.",
+            },
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        return tool_error(str(e), success=False)
+
+
+def _markdown_headings(content: str) -> list[dict[str, Any]]:
+    headings = []
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if match:
+            headings.append(
+                {
+                    "level": len(match.group(1)),
+                    "title": match.group(2).strip(),
+                    "line": line_number,
+                }
+            )
+    return headings
+
+
+def _slice_markdown_content(
+    content: str,
+    *,
+    section: str | None = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Return a deterministic heading or line slice plus provenance metadata."""
+    if section and (start_line is not None or end_line is not None):
+        return None, {"error": "Use either section or start_line/end_line, not both."}
+
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+    headings = _markdown_headings(content)
+
+    if section:
+        needle = section.strip().casefold()
+        exact = [item for item in headings if item["title"].casefold() == needle]
+        matches = exact or [
+            item for item in headings if needle and needle in item["title"].casefold()
+        ]
+        if len(matches) != 1:
+            return None, {
+                "error": (
+                    f"Section '{section}' was not found."
+                    if not matches
+                    else f"Section '{section}' is ambiguous."
+                ),
+                "available_sections": headings,
+            }
+        selected = matches[0]
+        start = selected["line"]
+        end = total_lines
+        for heading in headings:
+            if heading["line"] > start and heading["level"] <= selected["level"]:
+                end = heading["line"] - 1
+                break
+        sliced = "".join(lines[start - 1 : end])
+        return sliced, {
+            "section": selected["title"],
+            "source_range": {"start_line": start, "end_line": end},
+            "available_sections": headings,
+        }
+
+    if start_line is not None or end_line is not None:
+        start = int(start_line or 1)
+        end = int(end_line or total_lines)
+        if start < 1 or end < start or end > total_lines:
+            return None, {
+                "error": f"Invalid line range {start}-{end}; file has {total_lines} lines."
+            }
+        return "".join(lines[start - 1 : end]), {
+            "source_range": {"start_line": start, "end_line": end},
+            "available_sections": headings,
+        }
+
+    return content, {
+        "source_range": {"start_line": 1, "end_line": total_lines},
+        "available_sections": headings,
+    }
+
+
 # ── Plugin skill serving ──────────────────────────────────────────────────
 
 
@@ -750,6 +870,9 @@ def _serve_plugin_skill(
     *,
     preprocess: bool = True,
     session_id: str | None = None,
+    section: str | None = None,
+    start_line: int | None = None,
+    end_line: int | None = None,
 ) -> str:
     """Read a plugin-provided skill, apply guards, return JSON."""
     from hermes_cli.plugins import _get_disabled_plugins, get_plugin_manager
@@ -819,13 +942,23 @@ def _serve_plugin_skill(
     except Exception:
         banner = ""
 
-    rendered_content = content
+    rendered_content, slice_info = _slice_markdown_content(
+        content,
+        section=section,
+        start_line=start_line,
+        end_line=end_line,
+    )
+    if rendered_content is None:
+        return json.dumps(
+            {"success": False, "name": f"{namespace}:{bare}", **slice_info},
+            ensure_ascii=False,
+        )
     if preprocess:
         try:
             from agent.skill_preprocessing import preprocess_skill_content
 
             rendered_content = preprocess_skill_content(
-                content,
+                rendered_content,
                 skill_md.parent,
                 session_id=session_id,
             )
@@ -834,17 +967,24 @@ def _serve_plugin_skill(
                 "Could not preprocess plugin skill %s:%s", namespace, bare, exc_info=True
             )
 
-    return json.dumps(
-        {
+    response = {
             "success": True,
             "name": f"{namespace}:{bare}",
             "content": f"{banner}{rendered_content}" if banner else rendered_content,
             "description": description,
             "linked_files": None,
             "readiness_status": SkillReadinessStatus.AVAILABLE.value,
-        },
-        ensure_ascii=False,
-    )
+            "source": str(skill_md.resolve()),
+            "source_range": slice_info["source_range"],
+            "available_sections": slice_info["available_sections"],
+            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "loaded_content_bytes": len(rendered_content.encode("utf-8")),
+            "full_content_bytes": len(content.encode("utf-8")),
+            "estimated_loaded_tokens": (len(rendered_content.encode("utf-8")) + 3) // 4,
+        }
+    if slice_info.get("section"):
+        response["section"] = slice_info["section"]
+    return json.dumps(response, ensure_ascii=False)
 
 
 def skill_view(
@@ -852,6 +992,9 @@ def skill_view(
     file_path: str = None,
     task_id: str = None,
     preprocess: bool = True,
+    section: str = None,
+    start_line: int = None,
+    end_line: int = None,
 ) -> str:
     """
     View the content of a skill or a specific file within a skill directory.
@@ -916,6 +1059,9 @@ def skill_view(
                     bare,
                     preprocess=preprocess,
                     session_id=task_id,
+                    section=section,
+                    start_line=start_line,
+                    end_line=end_line,
                 )
 
             # Plugin exists but this specific skill is missing?
@@ -1208,13 +1354,37 @@ def skill_view(
                     ensure_ascii=False,
                 )
 
+            full_file_content = content
+            selected_content, slice_info = _slice_markdown_content(
+                full_file_content,
+                section=section,
+                start_line=start_line,
+                end_line=end_line,
+            )
+            if selected_content is None:
+                return json.dumps(
+                    {"success": False, "name": name, "file": file_path, **slice_info},
+                    ensure_ascii=False,
+                )
             return json.dumps(
                 {
                     "success": True,
                     "name": name,
                     "file": file_path,
-                    "content": content,
+                    "content": selected_content,
                     "file_type": target_file.suffix,
+                    "source": str(target_file.resolve()),
+                    "source_range": slice_info["source_range"],
+                    "available_sections": slice_info["available_sections"],
+                    "content_sha256": hashlib.sha256(
+                        full_file_content.encode("utf-8")
+                    ).hexdigest(),
+                    "loaded_content_bytes": len(selected_content.encode("utf-8")),
+                    "full_content_bytes": len(full_file_content.encode("utf-8")),
+                    "estimated_loaded_tokens": (
+                        len(selected_content.encode("utf-8")) + 3
+                    ) // 4,
+                    **({"section": slice_info["section"]} if slice_info.get("section") else {}),
                 },
                 ensure_ascii=False,
             )
@@ -1364,13 +1534,23 @@ def skill_view(
                     exc_info=True,
                 )
 
-        rendered_content = content
+        rendered_content, slice_info = _slice_markdown_content(
+            content,
+            section=section,
+            start_line=start_line,
+            end_line=end_line,
+        )
+        if rendered_content is None:
+            return json.dumps(
+                {"success": False, "name": skill_name, **slice_info},
+                ensure_ascii=False,
+            )
         if preprocess:
             try:
                 from agent.skill_preprocessing import preprocess_skill_content
 
                 rendered_content = preprocess_skill_content(
-                    content,
+                    rendered_content,
                     skill_dir,
                     session_id=task_id,
                 )
@@ -1387,6 +1567,13 @@ def skill_view(
             "related_skills": related_skills,
             "content": rendered_content,
             "path": rel_path,
+            "source": str(skill_md.resolve()),
+            "source_range": slice_info["source_range"],
+            "available_sections": slice_info["available_sections"],
+            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "loaded_content_bytes": len(rendered_content.encode("utf-8")),
+            "full_content_bytes": len(content.encode("utf-8")),
+            "estimated_loaded_tokens": (len(rendered_content.encode("utf-8")) + 3) // 4,
             "skill_dir": str(skill_dir) if skill_dir else None,
             "linked_files": linked_files if linked_files else None,
             "usage_hint": "To view linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'"
@@ -1403,6 +1590,9 @@ def skill_view(
             if setup_needed
             else SkillReadinessStatus.AVAILABLE.value,
         }
+
+        if slice_info.get("section"):
+            result["section"] = slice_info["section"]
 
         setup_help = next((e["help"] for e in required_env_vars if e.get("help")), None)
         if setup_help:
@@ -1503,6 +1693,31 @@ SKILLS_LIST_SCHEMA = {
     },
 }
 
+SKILLS_SEARCH_SCHEMA = {
+    "name": "skills_search",
+    "description": "Search the complete installed skill catalog by name, description, tags, category, and Markdown headings without loading skill bodies.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Task, capability, keyword, or procedure to search for.",
+            },
+            "category": {
+                "type": "string",
+                "description": "Optional exact category filter.",
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+                "default": 10,
+            },
+        },
+        "required": ["query"],
+    },
+}
+
 SKILL_VIEW_SCHEMA = {
     "name": "skill_view",
     "description": "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.",
@@ -1516,6 +1731,20 @@ SKILL_VIEW_SCHEMA = {
             "file_path": {
                 "type": "string",
                 "description": "OPTIONAL: Path to a linked file within the skill (e.g., 'references/api.md', 'templates/config.yaml', 'scripts/validate.py'). Omit to get the main SKILL.md content.",
+            },
+            "section": {
+                "type": "string",
+                "description": "OPTIONAL: Load one Markdown heading and its contents instead of the whole file. Exact heading match is preferred; a unique partial match is accepted.",
+            },
+            "start_line": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "OPTIONAL: First 1-indexed source line to load. Use with end_line, and not with section.",
+            },
+            "end_line": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "OPTIONAL: Last 1-indexed source line to load. Use with start_line, and not with section.",
             },
         },
         "required": ["name"],
@@ -1532,12 +1761,32 @@ registry.register(
     check_fn=check_skills_requirements,
     emoji="📚",
 )
+
+registry.register(
+    name="skills_search",
+    toolset="skills",
+    schema=SKILLS_SEARCH_SCHEMA,
+    handler=lambda args, **kw: skills_search(
+        query=args.get("query", ""),
+        category=args.get("category"),
+        limit=args.get("limit", 10),
+        task_id=kw.get("task_id"),
+    ),
+    check_fn=check_skills_requirements,
+    emoji="🔎",
+)
+
 def _skill_view_with_bump(args, **kw):
     """Invoke skill_view, then bump view_count on success. Best-effort: a
     telemetry failure never breaks the tool call."""
     name = args.get("name", "")
     result = skill_view(
-        name, file_path=args.get("file_path"), task_id=kw.get("task_id")
+        name,
+        file_path=args.get("file_path"),
+        task_id=kw.get("task_id"),
+        section=args.get("section"),
+        start_line=args.get("start_line"),
+        end_line=args.get("end_line"),
     )
     try:
         parsed = json.loads(result)

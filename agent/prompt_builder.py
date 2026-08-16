@@ -997,6 +997,7 @@ def _skill_should_show(
 def build_skills_system_prompt(
     available_tools: "set[str] | None" = None,
     available_toolsets: "set[str] | None" = None,
+    compact_categories: "frozenset[str] | None" = None,
 ) -> str:
     """Build a compact skill index for the system prompt.
 
@@ -1033,6 +1034,7 @@ def build_skills_system_prompt(
         tuple(str(d) for d in external_dirs),
         tuple(sorted(str(t) for t in (available_tools or set()))),
         tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
+        tuple(sorted(str(category) for category in (compact_categories or frozenset()))),
         _platform_hint,
         tuple(sorted(disabled)),
     )
@@ -1168,13 +1170,23 @@ def build_skills_system_prompt(
             except Exception as e:
                 logger.debug("Could not read external skill description %s: %s", desc_file, e)
 
+    compact = compact_categories or frozenset()
+    demoted = frozenset(
+        category
+        for category in skills_by_category
+        if "*" in compact or category.split("/", 1)[0] in compact
+    )
+    names_only_note = ""
+
     if not skills_by_category:
         result = ""
     else:
         index_lines = []
         for category in sorted(skills_by_category.keys()):
             cat_desc = category_descriptions.get(category, "")
-            if cat_desc:
+            if category in demoted:
+                index_lines.append(f"  {category} [names only]:")
+            elif cat_desc:
                 index_lines.append(f"  {category}: {cat_desc}")
             else:
                 index_lines.append(f"  {category}:")
@@ -1184,23 +1196,18 @@ def build_skills_system_prompt(
                 if name in seen:
                     continue
                 seen.add(name)
-                if desc:
+                if desc and category not in demoted:
                     index_lines.append(f"    - {name}: {desc}")
                 else:
                     index_lines.append(f"    - {name}")
 
         result = (
-            "## Skills (mandatory)\n"
-            "Before replying, scan the skills below. If a skill matches or is even partially relevant "
-            "to your task, you MUST load it with skill_view(name) and follow its instructions. "
-            "Err on the side of loading — it is always better to have context you don't need "
-            "than to miss critical steps, pitfalls, or established workflows. "
-            "Skills contain specialized knowledge — API endpoints, tool-specific commands, "
-            "and proven workflows that outperform general-purpose approaches. Load the skill "
-            "even if you think you could handle the task with basic tools like web_search or terminal. "
-            "Skills also encode the user's preferred approach, conventions, and quality standards "
-            "for tasks like code review, planning, and testing — load them even for tasks you "
-            "already know how to do, because the skill defines how it should be done here.\n"
+            "## Skills\n"
+            "Scan the skill names before replying. Use skills_search(query) when the names-only "
+            "index is insufficient. Load a skill with skill_view(name) only when it is directly "
+            "relevant and likely to change the execution path. Simple answers and single-tool "
+            "checks usually need no skill. Prefer one umbrella skill over several overlapping "
+            "narrow skills, and do not reload a skill already present in current context.\n"
             "Whenever the user asks you to configure, set up, install, enable, disable, modify, "
             "or troubleshoot Hermes Agent itself — its CLI, config, models, providers, tools, "
             "skills, voice, gateway, plugins, or any feature — load the `hermes-agent` skill "
@@ -1215,7 +1222,8 @@ def build_skills_system_prompt(
             + "\n".join(index_lines) + "\n"
             "</available_skills>\n"
             "\n"
-            "Only proceed without loading a skill if genuinely none are relevant to the task."
+            "Proceed without loading a skill when none is needed for the smallest correct path."
+            + names_only_note
         )
 
     # ── Store in LRU cache ────────────────────────────────────────────

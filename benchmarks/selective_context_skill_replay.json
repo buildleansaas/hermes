@@ -1,0 +1,26 @@
+[
+  {
+    "id": "hermes-gateway-configuration",
+    "query": "configure Hermes Agent provider gateway",
+    "expected_skill": "hermes-agent",
+    "expected_section": "Gateway (Messaging Platforms)"
+  },
+  {
+    "id": "github-pr-ci",
+    "query": "create GitHub pull request inspect CI checks",
+    "expected_skill": "github-operations",
+    "expected_section": "Pull request lifecycle"
+  },
+  {
+    "id": "vercel-release-verification",
+    "query": "deploy Next.js Vercel production alias verification",
+    "expected_skill": "web-growth-deployment-ops",
+    "expected_section": "A. Vercel / public web deployment lane"
+  },
+  {
+    "id": "obsidian-note-operations",
+    "query": "read update notes Obsidian vault",
+    "expected_skill": "obsidian",
+    "expected_section": "Read a note"
+  }
+]
